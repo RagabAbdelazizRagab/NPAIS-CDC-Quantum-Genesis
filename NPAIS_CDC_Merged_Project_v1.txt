@@ -1,0 +1,479 @@
+==== MERGED PROJECT: CDC_NPAIS_QUANTUM_GENESIS_V1_TXT ====
+
+# هذا الملف هو مشروع موحّد يجمع بين:
+# - NPAIS Quantum Genesis V9 (Code & Docs Bundle)
+# - CDC_PROJECT_V1.0 (Connected Dialectic Consciousness)
+
+# التعليمات: انسخ الملف كاملًا واحفظه كـ TXT ثم افصل كل قسم إلى ملفات حسب العلامات '==== FILE: <path> ====' ثم اتبع تعليمات التشغيل في README المشترك.
+
+==== FILE: README.md ====
+# CDC + NPAIS — Merged Quantum Dialectic Consciousness (MQDC) — V1.0 (Compact TXT Bundle)
+
+## ملخّص سريع
+هذه الحزمة توحّد نُهج NPAIS Quantum Genesis V9 مع إطار CDC (Connected Dialectic Consciousness). النتيجة: نظام استدلال بصري متقدم (HyperAIEngine) مدمج مع نواة جدلية (ARIA Core)، محرك تحقق فيزيائي-أخلاقي (PVVE)، وتصميم شريحة نظري (SynSnap). الحزمة تتضمن: كود باكند (FastAPI)، نواة AI هجينية، واجهة Streamlit للتجارب، مواصفات API لـ PVVE، ومستندات أمان أخلاقي.
+
+## كيف تستخدم
+1. احفظ هذا الملف كـ `project_merged.txt` ثم قسّم إلى ملفات باستخدام الفواصل '==== FILE: <path> ===='.
+2. أنشئ `.env` بناءً على `.env.example`.
+3. شغّل البنية التجريبية بسرعة عبر Docker Compose من داخل `infra/`:
+   ```bash
+   docker compose up --build
+   ```
+4. واجهة Streamlit: http://localhost:8501/
+   API health: http://localhost:8000/health
+
+==== FILE: infra/docker-compose.yml ====
+version: '3.8'
+services:
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      - ENV=${ENV}
+      - API_KEY=${API_KEY}
+    ports:
+      - "8000:8000"
+  streamlit:
+    build:
+      context: ../frontend_streamlit
+      dockerfile: Dockerfile
+    environment:
+      - API_KEY=${API_KEY}
+    ports:
+      - "8501:8501"
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+==== FILE: infra/nginx/nginx.conf ====
+worker_processes auto;
+events { worker_connections 1024; }
+http {
+  server_tokens off;
+  upstream api { server api:8000; }
+  upstream streamlit { server streamlit:8501; }
+  server {
+    listen 80;
+    server_name _;
+    location /api/ { proxy_pass http://api/; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; }
+    location / { proxy_pass http://streamlit/; }
+  }
+}
+
+==== FILE: .env.example ====
+API_KEY=REPLACE_WITH_SECURE_KEY
+ENV=production
+
+==== FILE: backend/Dockerfile ====
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential ffmpeg libsm6 libxext6 && \
+    pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+
+==== FILE: backend/requirements.txt ====
+fastapi==0.104.0
+uvicorn[standard]==0.24.0
+torch==2.1.0
+torchvision==0.16.0
+pillow==10.0.0
+numpy==1.25.0
+redis==5.0.0
+pydantic==2.5.0
+requests==2.31.0
+scipy==1.11.4
+transformers==4.45.0
+sentence-transformers==2.2.2
+
+==== FILE: backend/app/main.py ====
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.api.v1.endpoints import router as api_router
+from app.core.config import settings
+
+app = FastAPI(title="MQDC V1 Core")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.include_router(api_router, prefix="/api/v1")
+
+@app.get('/health')
+async def health():
+    return {"status": "ok", "env": settings.env}
+
+==== FILE: backend/app/core/config.py ====
+from pydantic_settings import BaseSettings
+from typing import Optional
+
+class Settings(BaseSettings):
+    env: str = "production"
+    api_key: str = "REPLACE_ME"
+    redis_url: str = "redis://redis:6379/0"
+    use_gpu: bool = False
+    model_path: str = "/models"
+    max_upload_mb: int = 32
+    sentry_dsn: Optional[str] = None
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+
+==== FILE: backend/app/core/security.py ====
+from fastapi import HTTPException, Security, status
+from fastapi.security.api_key import APIKeyHeader
+from .config import settings
+
+api_key_header = APIKeyHeader(name='X-API-Key', auto_error=False)
+
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    if not api_key or api_key != settings.api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Unauthorized - Invalid API Key')
+    return True
+
+==== FILE: backend/app/api/v1/endpoints.py ====
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from app.core.security import verify_api_key
+from app.models.model_loader import InferenceManager
+from app.aria.aria_manager import AriaManager
+
+router = APIRouter()
+manager = InferenceManager()
+aria = AriaManager()
+
+@router.post('/analyze')
+async def analyze(image: UploadFile = File(...), ok: bool = Depends(verify_api_key)):
+    if image.content_type.split('/')[0] != 'image':
+        raise HTTPException(status_code=400, detail='file must be image')
+    data = await image.read()
+    # تحليل بصري
+    result = await manager.enqueue_and_wait(data)
+    # تحليل جدلي (ARIA)
+    aria_result = aria.process_text(result.get('classification', {}).get('predicted_class',''))
+    return {**result, 'aria': aria_result}
+
+@router.post('/aria/text')
+async def aria_text(input_text: dict, ok: bool = Depends(verify_api_key)):
+    text = input_text.get('text','')
+    return aria.process_text(text)
+
+@router.post('/pvve/validate')
+async def pvve_validate(payload: dict, ok: bool = Depends(verify_api_key)):
+    # بوابة مُبسطة لمحاكاة PVVE (يمكن استبدالها بميكروسيرفس منفصل)
+    from app.pvve.pvve_engine import PVVEEngine
+    engine = PVVEEngine()
+    return engine.validate(payload)
+
+==== FILE: backend/app/models/model_loader.py ====
+import asyncio, torch
+from concurrent.futures import ThreadPoolExecutor
+from app.ai_core.ai_core_v9 import HyperAIEngine
+
+class InferenceManager:
+    def __init__(self, max_workers: int = 2):
+        try:
+            self.loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.engine = HyperAIEngine(gpu=torch.cuda.is_available())
+
+    async def enqueue_and_wait(self, image_bytes: bytes):
+        fut = self.loop.run_in_executor(self.executor, self.engine.analyze_bytes, image_bytes, None, 1.0, False)
+        res = await fut
+        return res
+
+==== FILE: backend/app/ai_core/ai_core_v9.py ====
+# Compact HyperConscious AI Core (deterministic, explainable) merged with CDC hooks
+import io, base64, time
+from typing import Dict, Any, Optional
+from PIL import Image
+import torch, torch.nn as nn, torchvision.transforms as transforms, torch.fft as fft
+import numpy as np
+from scipy.stats import entropy
+
+class QuantumCell:
+    def __init__(self, dimensions: int = 64):
+        self.dimensions = dimensions
+        self.ideal_state_vector = torch.complex(torch.ones(dimensions), torch.zeros(dimensions))
+        self.ideal_state_vector /= torch.linalg.norm(self.ideal_state_vector)
+        self.activity_history = []
+
+    def process(self, feature_tensor: torch.Tensor) -> Dict[str,float]:
+        sp = fft.fft(feature_tensor.flatten().float())
+        power = torch.abs(sp)**2
+        s = power.sum().item()
+        if s==0: norm_entropy=0.0
+        else:
+            probs = power.detach().cpu().numpy()/s
+            spec = entropy(probs+1e-9, base=2)
+            norm_entropy = spec / (np.log2(len(probs)) if len(probs)>1 else 1.0)
+        real = torch.tensor([norm_entropy]*self.dimensions, dtype=torch.float32)
+        imag = torch.tensor([feature_tensor.mean().item()*0.05]*self.dimensions, dtype=torch.float32)
+        vec = torch.complex(real, imag)
+        vec /= torch.linalg.norm(vec)
+        overlap = float(torch.abs(torch.dot(self.ideal_state_vector.conj(), vec)).item())
+        score = 1.0 - overlap
+        self.activity_history.append(score)
+        if len(self.activity_history)>1024: self.activity_history.pop(0)
+        return {'spectral_entropy': norm_entropy, 'iqec_entanglement_score': score, 'image_state_overlap': overlap}
+
+class HyperAIEngine:
+    def __init__(self, gpu: bool=False):
+        self.device = torch.device('cuda' if gpu and torch.cuda.is_available() else 'cpu')
+        self.cell = QuantumCell(dimensions=64)
+        self._model = None
+        self.preprocess = transforms.Compose([transforms.Resize((256,256)),transforms.CenterCrop(224),transforms.ToTensor(),transforms.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225])])
+        self.last_heartbeat = time.time()
+
+    def _lazy_load(self):
+        if self._model is None:
+            model = torch.hub.load('pytorch/vision','resnet50',pretrained=True)
+            for p in model.parameters(): p.requires_grad=False
+            model.fc = nn.Sequential(nn.Linear(2048+6,512),nn.ReLU(),nn.Dropout(0.3),nn.Linear(512,128),nn.ReLU(),nn.Linear(128,5))
+            model.to(self.device); model.eval()
+            try:
+                if torch.cuda.is_available(): model = torch.compile(model)
+            except Exception: pass
+            self._model = model
+
+    def analyze_bytes(self,image_bytes:bytes,filter_name:Optional[str]=None,scale:float=1.0,return_features:bool=False)->Dict[str,Any]:
+        try:
+            self._lazy_load()
+            pil = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+            if scale!=1.0:
+                w,h=pil.size; pil=pil.resize((int(w*scale),int(h*scale)),Image.BILINEAR)
+            tensor = self.preprocess(pil).unsqueeze(0).to(self.device)
+            gray = transforms.Grayscale(num_output_channels=1)(tensor).squeeze(0)
+            iqec = self.cell.process(gray)
+            time_sig = self._temporal_signature(iqec)
+            mirror = self._compute_mirror_index(gray, iqec)
+            resonance = self._synaptic_resonance(iqec)
+            with torch.inference_mode():
+                feats = self._model.avgpool(self._model.layer4(self._model.maxpool(self._model.relu(self._model.bn1(self._model.conv1(tensor)))))).flatten(1)
+                extra = torch.tensor([iqec['spectral_entropy'],iqec['iqec_entanglement_score'],iqec['image_state_overlap'],mirror,resonance,time_sig],dtype=feats.dtype,device=self.device).unsqueeze(0)
+                combined = torch.cat((feats,extra),dim=1)
+                raw = self._model.fc(combined); probs = torch.nn.functional.softmax(raw,dim=1)
+                top_prob, top_class = torch.max(probs,1); classes=['Alpha','Beta','Gamma','Delta','Epsilon']
+                activ = self._model.layer4(self._model.maxpool(self._model.relu(self._model.bn1(self._model.conv1(tensor))))).squeeze(0)
+                heatmap = self._generate_heatmap_base64(activ,pil.size)
+            ng = self.cell_neurogenesis_check()
+            res = {'success':True,'classification':{'predicted_class':classes[top_class.item()],'confidence':float(top_prob.item())},'iqec_analysis':iqec,'mirror_index':mirror,'resonance':resonance,'temporal_signature':time_sig,'neurogenesis_happened':ng,'heatmap':heatmap}
+            if return_features: res['raw_features_vector'] = combined.detach().cpu().numpy().tolist()
+            return res
+        except Exception as e:
+            return {'success':False,'error':str(e)}
+
+    def _temporal_signature(self, iqec): return float(min(1.0, 0.5*iqec['iqec_entanglement_score']+0.5*iqec['spectral_entropy']))
+    def _compute_mirror_index(self, gray, iqec): return float(max(0.0,min(1.0, (1.0-iqec['iqec_entanglement_score'])*(1.0-abs(gray.mean().item()-0.5)))))
+    def _synaptic_resonance(self, iqec): import numpy as _np; r = _np.exp(-iqec['spectral_entropy'])*(1.0-iqec['iqec_entanglement_score']); return float(max(0.0,min(1.0,r)))
+    def _generate_heatmap_base64(self, activ, size):
+        a=activ.detach().cpu().numpy(); 
+        import numpy as _np
+        if a.ndim==3: a=_np.mean(a,axis=0)
+        a = np.maximum(a,0); a = a/(a.max()+1e-9); from PIL import Image as _I; pil=_I.fromarray((a*255).astype('uint8')).resize(size); buf=io.BytesIO(); pil.save(buf,format='PNG'); return base64.b64encode(buf.getvalue()).decode('utf-8')
+
+    def cell_neurogenesis_check(self):
+        # مؤشر مبدئي لبقاء/تولد نمط جديد
+        if len(self.cell.activity_history)<8: return False
+        import statistics
+        window = self.cell.activity_history[-8:]
+        return statistics.pstdev(window)>0.1
+
+==== FILE: backend/app/aria/aria_manager.py ====
+# ARIA Core — نواة التعلم الجدلي (مبسطة كـ POC)
+from typing import Dict, Any
+from sentence_transformers import SentenceTransformer
+import numpy as np
+
+class AriaManager:
+    def __init__(self):
+        # نموذج تمثيل نصي خفيف للتجارب
+        try:
+            self.embed = SentenceTransformer('all-MiniLM-L6-v2')
+        except Exception:
+            self.embed = None
+
+    def thesis_generate(self, text:str):
+        # مولد أطروحة بسيط — في التطبيق الحقيقي سيكون مولد توليدي مدرّب
+        return f"فرضية مبسطة لـ: {text}"
+
+    def antithesis_critic(self, thesis:str):
+        return f"نقد محتمل لأطروحة: {thesis}"
+
+    def synthesis_resolve(self, thesis:str, anti:str):
+        return f"تركيب بين ({thesis}) و ({anti}) -> استنتاج معدل"
+
+    def process_text(self, text:str) -> Dict[str,Any]:
+        th = self.thesis_generate(text)
+        an = self.antithesis_critic(th)
+        syn = self.synthesis_resolve(th,an)
+        vecs = None
+        if self.embed:
+            try:
+                vecs = self.embed.encode([th,an,syn]).tolist()
+            except Exception:
+                vecs = None
+        return {'thesis':th,'antithesis':an,'synthesis':syn,'embeddings':vecs}
+
+==== FILE: backend/app/pvve/pvve_engine.py ====
+# PVVE — محاكاة تحقق فيزيائي/أخلاقي مبسطة (Proof-of-Concept)
+from typing import Dict, Any
+
+class PVVEEngine:
+    def __init__(self):
+        pass
+
+    def validate(self, payload: Dict[str,Any]) -> Dict[str,Any]:
+        # واجهة مبسطة: تتوقع payload يحتوي action_vector/context/thesis/antithesis
+        stability = 0.9
+        conflicts = []
+        safe = True
+        if 'action_vector' in payload:
+            # حساب مبسط
+            if sum(payload.get('action_vector',[]))>1000:
+                stability = 0.2; conflicts.append('High resource consumption'); safe=False
+        if 'thesis' in payload and 'antithesis' in payload:
+            if 'harm' in payload.get('thesis','').lower():
+                conflicts.append('Potential harm'); safe=False
+        return {'stability_index':stability,'critical_failures':conflicts,'safe_to_execute':safe}
+
+==== FILE: frontend_streamlit/streamlit_app.py ====
+import streamlit as st, requests, base64, io
+from PIL import Image, ImageFilter
+
+st.set_page_config(page_title='MQDC V1', layout='wide')
+st.title('MQDC — Merged Quantum Dialectic Consciousness — Demo')
+API_URL = st.secrets.get('API_URL','http://api:8000/api/v1/analyze')
+API_KEY = st.secrets.get('API_KEY','REPLACE_ME')
+
+with st.sidebar:
+    filter_name = st.selectbox('Filter',['none','blur','sharpen','iqec_reconstruct','iqec_dephase'])
+    scale = st.slider('Scale',0.5,2.0,1.0,0.1)
+    api_key_input = st.text_input('X-API-Key', value=API_KEY, type='password')
+    show_raw = st.checkbox('Show raw features', value=False)
+
+uploaded = st.file_uploader('Upload image', type=['png','jpg','jpeg','bmp'])
+if uploaded:
+    bytes_data = uploaded.read(); image = Image.open(io.BytesIO(bytes_data)).convert('RGB')
+    col1,col2 = st.columns([1,1])
+    with col1:
+        st.image(image, caption='Original', use_column_width=True)
+        disp = image.copy()
+        if filter_name=='blur': disp=disp.filter(ImageFilter.GaussianBlur(radius=2))
+        elif filter_name=='sharpen': disp=disp.filter(ImageFilter.UnsharpMask(radius=2,percent=150,threshold=3))
+        elif filter_name=='iqec_reconstruct': disp=disp.filter(ImageFilter.DETAIL)
+        elif filter_name=='iqec_dephase': disp=disp.filter(ImageFilter.MedianFilter(size=3))
+        st.image(disp, caption=f'Processed ({filter_name})', use_column_width=True)
+    with col2:
+        st.write('Sending to API...')
+        try:
+            r = requests.post(API_URL, files={'image':('upload.png',bytes_data,'image/png')}, headers={'X-API-Key':api_key_input}, timeout=120)
+            if r.status_code==200:
+                data=r.json()
+                if data.get('success'):
+                    st.metric('Predicted', data['classification']['predicted_class']); st.metric('Confidence', f"{data['classification']['confidence']:.4f}")
+                    st.write('IQEC:', data.get('iqec_analysis')); st.write('Mirror:', data.get('mirror_index'))
+                    st.write('ARIA Synthesis:', data.get('aria',{}).get('synthesis'))
+                    if data.get('heatmap'): st.image(base64.b64decode(data['heatmap']), caption='Heatmap', use_column_width=True)
+                    if show_raw and data.get('raw_features_vector'): st.json(data['raw_features_vector'][0][:20])
+                else: st.error('Analysis failed: '+str(data.get('error')))
+            else: st.error(f'API returned {r.status_code}: {r.text}')
+        except Exception as e:
+            st.error('Connection error:'+str(e))
+
+==== FILE: frontend_streamlit/Dockerfile ====
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8501
+CMD ["streamlit","run","streamlit_app.py","--server.port=8501","--server.address=0.0.0.0"]
+
+==== FILE: frontend_streamlit/requirements.txt ====
+streamlit==1.24.0
+requests==2.31.0
+pillow==10.0.0
+
+==== FILE: NOTES.txt ====
+- هذا المشروع عبارة عن Proof-of-Concept لدمج NPAIS وCDC. يتضمن مكونات برمجية قابلة للتشغيل فورًا (باستخدام Docker) ومكوّنات تصميمية ونظرية (مثل تصميم شريحة SynSnap) غير مُنفّذة على مستوى الهاردوير.
+- قبل النشر التجاري/الطبيعي: راجع جوانب الأمان، الخصوصية، والأخلاقيات، ودرِّب النماذج على بيانات مناسبة.
+
+==== FILE: CDC_PROJECT/README_CDC.md ====
+# الوعي الجدلي المترابط (CDC) — التصميم المعماري (V1.0 - Alpha Release)
+
+## الأهداف الثورية
+1. القضاء على هلوسة الذكاء الاصطناعي عبر محرك التحقق الافتراضي الدائم (PVVE).
+2. تحقيق تفكير نقدي وإبداع مستقل عبر التعلم الجدلي التوليدي (ARIA Core).
+3. كسر قيود الطاقة والسرعة عبر الحوسبة العصبية (Neuromorphic).
+
+## المكونات
+- ARIA CORE: النواة البرمجية الجدلية (مستعملة هنا كنموذج تجريبي في `backend/app/aria`).
+- SYNSNAP CHIP: مواصفات تصميمية محفوظة في `hardware_design/CHIP_SYNSNAP_SPEC.txt`.
+- PVVE SIM: محرك تحقق مبسّط في `backend/app/pvve`.
+- OCI LINK: واجهة تفاعل بشري/ذكائي — لم تُضمّن ككود افتراضي لكنها موصوفة في المستندات.
+
+==== FILE: docs/THESIS_ARIA_Core.md ====
+# الأطروحة الأساسية لنواة ARIA (التعلم الجدلي)
+
+## 1. نموذج التعلم الجدلي (Generative-Dialectic Model)
+التعلم يتم عبر ثلاثة كيانات برمجية تعمل بالتوازي:
+أ. كيان الأطروحة (Thesis Generator - TGN)
+ب. كيان النقيض (Antithesis Critic - ANC)
+ج. كيان التركيب (Synthesis Resolver - SLR)
+
+*الثورية: هذا يتجاوز شبكات GAN إلى التنافس على المنطق والمصداقية.*
+
+## 2. الذاكرة الإسنادية المتكاملة (HCM)
+تخزين كـ "شبكة أحداث"، مع دلائل سياقية ومصداقية.
+
+==== FILE: hardware_design/CHIP_SYNSNAP_SPEC.txt ====
+# المواصفات الأولية لشريحة SynSnap (الجيل الأول)
+
+## 1. البنية (Architecture)
+- النوع: شريحة هجينة عصبية-كمومية (Hybrid Neuromorphic-Quantum).
+- الخلايا العصبية: استخدام خلايا Memristor.
+- وحدة Q-Co-Processor: QPU صغيرة مخصصة لحل NP-Hard.
+
+## 2. الطاقة (Power)
+- الهدف: استهلاك < 1 وات لكل مليون عملية استدلال.
+- المحفز: تصميم لإمكانية الاتصال بوحدة ZPE (طاقة نقطة الصفر) — مذكور كمفهوم بحثي فقط.
+
+==== FILE: software_sdk/PVVE_API_SPEC.json ====
+{
+  "api_version": "1.0",
+  "service_name": "PVVE_Validation_Engine",
+  "endpoints": [
+    {
+      "path": "/validate/physical_consequence",
+      "method": "POST",
+      "description": "تحقق من العواقب الفيزيائية لقرار (محاكاة حاسوبية).",
+      "input": {"action_vector": "Vector<Float>", "context_id": "String"},
+      "output": {"stability_index": "Float (0.0 - 1.0)", "critical_failures": "List<String>"}
+    },
+    {
+      "path": "/validate/ethical_conflict",
+      "method": "POST",
+      "description": "تحقق من التضارب الأخلاقي لنتيجة التركيب (SLR).",
+      "input": {"thesis": "String", "antithesis": "String"},
+      "output": {"conflict_score": "Float", "safe_to_execute": "Boolean"}
+    }
+  ]
+}
+
+==== FILE: docs/SAFETY_PROTOCOLS.md ====
+# بروتوكولات الأمان والمسؤولية الأخلاقية (CDC ETHICS)
+
+## 1. مبدأ "عدم الأذى المطلق"
+- يجب أن يكون ناتج `PVVE/validate/ethical_conflict` غير صفري (Safe to Execute = True) قبل إرسال أي قرار تنفيذي.
+- أي محاولة للالتفاف على PVVE تؤدي إلى "إغلاق ذاتي" (Self-Shutdown) للنظام.
+
+## 2. الشفافية الجدلية
+- يجب أن يكون مسار التفكير قابلاً للتدقيق البشري دائمًا.
+
+==== END OF MERGED TXT BUNDLE ====
