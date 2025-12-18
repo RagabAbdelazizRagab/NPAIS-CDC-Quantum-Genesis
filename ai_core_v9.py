@@ -1,6 +1,6 @@
 
 # -*- coding: utf-8 -*-
-"""
+""".
 NPAIS-CDC Quantum Genesis
 المخترع: رجب عبد العزيز رجب
 التاريخ: 2024
